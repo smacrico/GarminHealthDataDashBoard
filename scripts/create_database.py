@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 
 class HealthMetricsDB:
-    def __init__(self, db_path='C:/smakryko/myHealthData/DataBasesDev/health_metrics.db'):
+    def __init__(self, db_path='C:/smakrykoDBs/health_metrics.db'):
         """Initialize database connection and create directory if needed"""
         # Ensure data directory exists
         os.makedirs(os.path.dirname(db_path) if os.path.dirname(db_path) else '.', exist_ok=True)

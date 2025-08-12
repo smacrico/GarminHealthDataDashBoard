@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 
 class HealthDataManager:
-    def __init__(self, db_path='C:/smakryko/myHealthData/DataBasesDev/health_metrics.db'):
+    def __init__(self, db_path='C:/smakrykoDBs/health_metrics.db'):
         self.db_path = db_path
     
     def get_connection(self):
