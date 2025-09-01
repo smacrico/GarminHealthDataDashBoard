@@ -2,370 +2,268 @@ import sqlite3
 import os
 from datetime import datetime, timedelta
 import random
-import numpy as np
-import pandas as pd
 
-class HealthMetricsDB:
-    def __init__(self, db_path='C:/smakrykoDBs/health_metrics.db'):
-        """Initialize database connection and create directory if needed"""
-        # Ensure data directory exists
+class GarminHealthMetricsDB:
+    def __init__(self, db_path='c:/smakrykoDBs/GarminHealth_Hydra.db'):
+        """Initialize DB connection"""
         os.makedirs(os.path.dirname(db_path) if os.path.dirname(db_path) else '.', exist_ok=True)
-        
         self.db_path = db_path
         self.connection = sqlite3.connect(db_path)
         self.cursor = self.connection.cursor()
-        
-        # Enable foreign keys
         self.cursor.execute("PRAGMA foreign_keys = ON")
-        
-    def create_tables(self):
-        """Create all necessary tables for health metrics storage"""
-        
-        # Main health data table - normalized structure
-        self.cursor.execute('''
-        CREATE TABLE IF NOT EXISTS health_data (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            timestamp DATETIME NOT NULL,
-            metric_name TEXT NOT NULL,
-            metric_value REAL NOT NULL,
+
+    # ------------------------
+    # CREATE TABLES
+    # ------------------------
+    def create_garmin_health_tables(self):
+        """Create Garmin Health API tables"""
+        self.cursor.execute("""
+        CREATE TABLE IF NOT EXISTS daily_summary (
+            summary_id TEXT PRIMARY KEY,
+            user_access_token TEXT NOT NULL,
+            calendar_date DATE NOT NULL,
+            steps INTEGER,
+            total_distance_in_meters INTEGER,
+            active_time_in_seconds INTEGER,
+            active_kilocalories INTEGER,
+            bmr_kilocalories INTEGER,
+            resting_heart_rate INTEGER,
+            overall_stress_level INTEGER,
+            created_date DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(user_access_token, calendar_date)
+        )""")
+
+        self.cursor.execute("""
+        CREATE TABLE IF NOT EXISTS sleep_summary (
+            summary_id TEXT PRIMARY KEY,
+            user_access_token TEXT NOT NULL,
+            calendar_date DATE NOT NULL,
+            sleep_start_timestamp_gmt INTEGER,
+            sleep_end_timestamp_gmt INTEGER,
+            duration_in_seconds INTEGER,
+            deep_sleep_duration_in_seconds INTEGER,
+            light_sleep_duration_in_seconds INTEGER,
+            rem_sleep_duration_in_seconds INTEGER,
+            awake_duration_in_seconds INTEGER,
+            overall_sleep_score INTEGER,
             device_id TEXT,
-            sync_timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(timestamp, metric_name)
-        )''')
-        
-        # User profiles and personal baselines
-        self.cursor.execute('''
-        CREATE TABLE IF NOT EXISTS user_profiles (
-            user_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE NOT NULL,
-            age INTEGER,
-            gender TEXT,
-            height_cm REAL,
-            weight_kg REAL,
-            activity_level TEXT,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )''')
-        
-        # Personal baselines for each metric
-        self.cursor.execute('''
-        CREATE TABLE IF NOT EXISTS personal_baselines (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            metric_name TEXT NOT NULL,
-            target_value REAL NOT NULL,
-            min_threshold REAL NOT NULL,
-            max_threshold REAL NOT NULL,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (user_id) REFERENCES user_profiles (user_id),
-            UNIQUE(user_id, metric_name)
-        )''')
-        
-        # Activity sessions (for workout/exercise data)
-        self.cursor.execute('''
-        CREATE TABLE IF NOT EXISTS activity_sessions (
-            session_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            start_time DATETIME NOT NULL,
-            end_time DATETIME NOT NULL,
-            activity_type TEXT NOT NULL,
-            duration_minutes INTEGER,
-            distance_km REAL,
-            calories_burned INTEGER,
+            created_date DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(user_access_token, calendar_date)
+        )""")
+
+        self.cursor.execute("""
+        CREATE TABLE IF NOT EXISTS hrv_summary (
+            summary_id TEXT PRIMARY KEY,
+            user_access_token TEXT NOT NULL,
+            calendar_date DATE NOT NULL,
+            weekly_avg REAL,
+            last_night_avg REAL,
+            last_night_5_min_high REAL,
+            status TEXT,
+            feedback_phrase TEXT,
+            created_date DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(user_access_token, calendar_date)
+        )""")
+        print("✅ Health tables created.")
+
+    def create_garmin_activity_tables(self):
+        """Create Garmin Activity API tables"""
+        self.cursor.execute("""
+        CREATE TABLE IF NOT EXISTS activity_summary (
+            activity_id TEXT PRIMARY KEY,
+            user_access_token TEXT NOT NULL,
+            activity_name TEXT,
+            activity_type TEXT,
+            start_time_in_seconds INTEGER,
+            duration_in_seconds INTEGER,
+            distance_in_meters REAL,
             avg_heart_rate INTEGER,
             max_heart_rate INTEGER,
-            avg_pace_min_km REAL,
-            elevation_gain_m REAL,
+            calories INTEGER,
             device_id TEXT,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (user_id) REFERENCES user_profiles (user_id)
-        )''')
-        
-        # Sleep sessions (detailed sleep tracking)
-        self.cursor.execute('''
-        CREATE TABLE IF NOT EXISTS sleep_sessions (
-            sleep_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            sleep_date DATE NOT NULL,
-            bedtime DATETIME,
-            sleep_start DATETIME,
-            sleep_end DATETIME,
-            wake_time DATETIME,
-            total_sleep_minutes INTEGER,
-            deep_sleep_minutes INTEGER,
-            light_sleep_minutes INTEGER,
-            rem_sleep_minutes INTEGER,
-            awake_minutes INTEGER,
-            sleep_efficiency_percent REAL,
-            sleep_score INTEGER,
-            device_id TEXT,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (user_id) REFERENCES user_profiles (user_id),
-            UNIQUE(user_id, sleep_date)
-        )''')
-        
-        # Alert/notification logs
-        self.cursor.execute('''
-        CREATE TABLE IF NOT EXISTS health_alerts (
-            alert_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            metric_name TEXT NOT NULL,
-            alert_type TEXT NOT NULL,
-            severity TEXT NOT NULL,
-            metric_value REAL NOT NULL,
-            threshold_value REAL,
-            alert_message TEXT NOT NULL,
-            acknowledged BOOLEAN DEFAULT FALSE,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            acknowledged_at DATETIME,
-            FOREIGN KEY (user_id) REFERENCES user_profiles (user_id)
-        )''')
-        
-        # Metric definitions and metadata
-        self.cursor.execute('''
-        CREATE TABLE IF NOT EXISTS metric_definitions (
-            metric_name TEXT PRIMARY KEY,
-            display_name TEXT NOT NULL,
-            unit TEXT,
-            category TEXT,
-            data_type TEXT,
-            normal_range_min REAL,
-            normal_range_max REAL,
-            description TEXT,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )''')
-        
-        print("✅ All tables created successfully!")
-    
+            steps INTEGER,
+            created_date DATETIME DEFAULT CURRENT_TIMESTAMP
+        )""")
+        print("✅ Activity tables created.")
+
+    def create_user_management_tables(self):
+        """User and device tables"""
+        self.cursor.execute("""
+        CREATE TABLE IF NOT EXISTS user_access_tokens (
+            user_access_token TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            created_date DATETIME DEFAULT CURRENT_TIMESTAMP
+        )""")
+        self.cursor.execute("""
+        CREATE TABLE IF NOT EXISTS devices (
+            device_id TEXT PRIMARY KEY,
+            user_access_token TEXT NOT NULL,
+            device_name TEXT,
+            device_type TEXT,
+            created_date DATETIME DEFAULT CURRENT_TIMESTAMP
+        )""")
+        print("✅ User/device tables created.")
+
     def create_indexes(self):
-        """Create indexes for better query performance"""
-        
+        """Indexes for faster read access"""
         indexes = [
-            "CREATE INDEX IF NOT EXISTS idx_health_data_timestamp ON health_data(timestamp)",
-            "CREATE INDEX IF NOT EXISTS idx_health_data_metric ON health_data(metric_name)",
-            "CREATE INDEX IF NOT EXISTS idx_health_data_timestamp_metric ON health_data(timestamp, metric_name)",
-            "CREATE INDEX IF NOT EXISTS idx_activity_sessions_start_time ON activity_sessions(start_time)",
-            "CREATE INDEX IF NOT EXISTS idx_activity_sessions_user ON activity_sessions(user_id)",
-            "CREATE INDEX IF NOT EXISTS idx_sleep_sessions_date ON sleep_sessions(sleep_date)",
-            "CREATE INDEX IF NOT EXISTS idx_sleep_sessions_user ON sleep_sessions(user_id)",
-            "CREATE INDEX IF NOT EXISTS idx_health_alerts_created ON health_alerts(created_at)",
-            "CREATE INDEX IF NOT EXISTS idx_health_alerts_user ON health_alerts(user_id)"
+            "CREATE INDEX IF NOT EXISTS idx_daily_date ON daily_summary(calendar_date)",
+            "CREATE INDEX IF NOT EXISTS idx_sleep_date ON sleep_summary(calendar_date)",
+            "CREATE INDEX IF NOT EXISTS idx_activity_date ON activity_summary(start_time_in_seconds)"
         ]
-        
-        for index_sql in indexes:
-            self.cursor.execute(index_sql)
-        
-        print("✅ Database indexes created successfully!")
-    
-    def insert_metric_definitions(self):
-        """Insert standard Garmin health metric definitions"""
-        
-        metrics = [
-            ('heart_rate', 'Heart Rate', 'bpm', 'cardiovascular', 'integer', 60, 100, 'Resting heart rate measurement'),
-            ('steps', 'Daily Steps', 'steps', 'activity', 'integer', 8000, 12000, 'Daily step count'),
-            ('sleep_efficiency', 'Sleep Efficiency', '%', 'sleep', 'float', 80, 95, 'Percentage of time spent sleeping while in bed'),
-            ('hrv_score', 'HRV Score', 'ms', 'recovery', 'float', 20, 60, 'Heart rate variability score'),
-            ('stress_level', 'Stress Level', 'score', 'wellness', 'integer', 0, 40, 'Stress level on 0-100 scale'),
-            ('spo2', 'Blood Oxygen', '%', 'respiratory', 'float', 95, 100, 'Blood oxygen saturation percentage'),
-            ('calories', 'Calories Burned', 'kcal', 'activity', 'integer', 1500, 3000, 'Total daily calories burned'),
-            ('active_minutes', 'Active Minutes', 'minutes', 'activity', 'integer', 30, 90, 'Minutes of moderate to vigorous activity'),
-            ('body_battery', 'Body Battery', 'score', 'energy', 'integer', 50, 100, 'Energy reserves on 0-100 scale'),
-            ('respiration_rate', 'Respiration Rate', 'breaths/min', 'respiratory', 'integer', 12, 20, 'Breathing rate per minute'),
-            ('vo2_max', 'VO2 Max', 'ml/kg/min', 'fitness', 'float', 25, 60, 'Maximum oxygen uptake'),
-            ('body_weight', 'Body Weight', 'kg', 'biometric', 'float', 40, 150, 'Body weight in kilograms'),
-            ('body_fat_percent', 'Body Fat %', '%', 'biometric', 'float', 5, 40, 'Body fat percentage'),
-            ('hydration_level', 'Hydration', 'score', 'wellness', 'integer', 0, 100, 'Hydration level score')
-        ]
-        
-        self.cursor.executemany('''
-        INSERT OR REPLACE INTO metric_definitions 
-        (metric_name, display_name, unit, category, data_type, normal_range_min, normal_range_max, description)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ''', metrics)
-        
-        print("✅ Metric definitions inserted successfully!")
-    
+        for idx in indexes:
+            self.cursor.execute(idx)
+        print("✅ Indexes created.")
+
+    # ------------------------
+    # DATA CREATION
+    # ------------------------
     def create_default_user(self):
-        """Create a default user profile for testing"""
-        
-        try:
-            self.cursor.execute('''
-            INSERT INTO user_profiles (username, age, gender, height_cm, weight_kg, activity_level)
-            VALUES (?, ?, ?, ?, ?, ?)
-            ''', ('default_user', 30, 'unspecified', 170.0, 70.0, 'moderate'))
-            
-            user_id = self.cursor.lastrowid
-            
-            # Insert default baselines for the user
-            default_baselines = [
-                ('heart_rate', 65, 50, 80),
-                ('steps', 10000, 8000, 12000),
-                ('sleep_efficiency', 85, 75, 95),
-                ('hrv_score', 40, 25, 60),
-                ('stress_level', 25, 10, 40),
-                ('spo2', 98, 95, 100),
-                ('calories', 2200, 1500, 3000),
-                ('active_minutes', 60, 30, 90),
-                ('body_battery', 75, 50, 100),
-                ('respiration_rate', 16, 12, 20)
-            ]
-            
-            for metric, target, min_val, max_val in default_baselines:
-                self.cursor.execute('''
-                INSERT INTO personal_baselines (user_id, metric_name, target_value, min_threshold, max_threshold)
-                VALUES (?, ?, ?, ?, ?)
-                ''', (user_id, metric, target, min_val, max_val))
-            
-            print(f"✅ Default user created with ID: {user_id}")
-            return user_id
-            
-        except sqlite3.IntegrityError:
-            print("ℹ️ Default user already exists")
-            self.cursor.execute("SELECT user_id FROM user_profiles WHERE username = 'default_user'")
-            return self.cursor.fetchone()[0]
-    
-    def generate_sample_data(self, days=30, user_id=1):
-        """Generate sample health data for testing"""
-        
-        print(f"🔄 Generating {days} days of sample data...")
-        
-        # Get metric definitions
-        self.cursor.execute("SELECT metric_name, normal_range_min, normal_range_max FROM metric_definitions")
-        metrics = self.cursor.fetchall()
-        
-        # Generate data for each day
-        start_date = datetime.now() - timedelta(days=days)
-        
+        """Create a default user + device"""
+        user_token = "GARMIN_USER_TOKEN_12345"
+        self.cursor.execute("""
+        INSERT OR REPLACE INTO user_access_tokens (user_access_token, user_id)
+        VALUES (?, ?)""", (user_token, 'test_user_001'))
+        self.cursor.execute("""
+        INSERT OR REPLACE INTO devices (device_id, user_access_token, device_name, device_type)
+        VALUES (?, ?, ?, ?)""", ('GARMIN_DEVICE_12345', user_token, 'vívoactive 4', 'fitness_tracker'))
+        print("✅ Default user/device created.")
+        return user_token
+
+    def generate_garmin_sample_data(self, days=30, user_token="GARMIN_USER_TOKEN_12345"):
+        """Generate simulated Garmin-like data"""
+        device_id = "GARMIN_DEVICE_12345"
         for day in range(days):
-            current_date = start_date + timedelta(days=day)
-            
-            # Generate hourly data points (24 per day)
-            for hour in range(24):
-                timestamp = current_date.replace(hour=hour, minute=0, second=0, microsecond=0)
-                
-                for metric_name, min_val, max_val in metrics:
-                    # Generate realistic values within normal ranges
-                    if metric_name == 'steps':
-                        # Steps accumulate throughout the day
-                        base_steps = hour * 400 + random.randint(0, 200)
-                        value = min(base_steps, 15000)
-                    elif metric_name == 'body_battery':
-                        # Body battery pattern: high in morning, depletes during day
-                        base_battery = max(20, 100 - (hour * 3) + random.randint(-10, 10))
-                        value = min(100, max(0, base_battery))
-                    elif metric_name == 'sleep_efficiency' and 6 <= hour <= 22:
-                        # Only generate sleep efficiency during typical sleep hours
-                        continue
-                    else:
-                        # Normal distribution around the middle of normal range
-                        mid_point = (min_val + max_val) / 2
-                        std_dev = (max_val - min_val) / 6  # 99.7% within range
-                        value = max(min_val, min(max_val, np.random.normal(mid_point, std_dev)))
-                    
-                    # Insert the data point
-                    try:
-                        self.cursor.execute('''
-                        INSERT OR REPLACE INTO health_data (timestamp, metric_name, metric_value, device_id)
-                        VALUES (?, ?, ?, ?)
-                        ''', (timestamp, metric_name, round(value, 2), 'simulator'))
-                    except Exception as e:
-                        print(f"Error inserting {metric_name} at {timestamp}: {e}")
-        
-        # Generate some sample sleep sessions
-        for day in range(days):
-            sleep_date = (start_date + timedelta(days=day)).date()
-            bedtime = datetime.combine(sleep_date, datetime.min.time().replace(hour=22, minute=30))
-            sleep_start = bedtime + timedelta(minutes=random.randint(10, 60))
-            sleep_end = sleep_start + timedelta(hours=random.randint(6, 9), minutes=random.randint(0, 59))
-            wake_time = sleep_end + timedelta(minutes=random.randint(5, 30))
-            
-            total_sleep = int((sleep_end - sleep_start).total_seconds() / 60)
-            deep_sleep = int(total_sleep * random.uniform(0.15, 0.25))
-            rem_sleep = int(total_sleep * random.uniform(0.20, 0.30))
-            light_sleep = total_sleep - deep_sleep - rem_sleep
-            awake_minutes = int((wake_time - bedtime).total_seconds() / 60) - total_sleep
-            
-            efficiency = (total_sleep / ((wake_time - bedtime).total_seconds() / 60)) * 100
-            
+            date_val = (datetime.now() - timedelta(days=days - day - 1)).strftime('%Y-%m-%d')
+            # Daily Summary
+            steps = random.randint(5000, 15000)
+            dist = int(steps * 0.75)
+            self.cursor.execute("""
+            INSERT OR REPLACE INTO daily_summary 
+            (summary_id, user_access_token, calendar_date, steps, total_distance_in_meters,
+             active_time_in_seconds, active_kilocalories, bmr_kilocalories, 
+             resting_heart_rate, overall_stress_level)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (f"daily_{user_token}_{date_val}", user_token, date_val, steps, dist,
+             random.randint(1800, 7200), random.randint(1400, 2400), 400,
+             random.randint(55, 75), random.randint(15, 45)))
+            # Sleep Summary
+            duration = random.randint(6*3600, 9*3600)
+            self.cursor.execute("""
+            INSERT OR REPLACE INTO sleep_summary 
+            (summary_id, user_access_token, calendar_date, duration_in_seconds,
+             deep_sleep_duration_in_seconds, light_sleep_duration_in_seconds,
+             rem_sleep_duration_in_seconds, awake_duration_in_seconds, 
+             overall_sleep_score, device_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (f"sleep_{user_token}_{date_val}", user_token, date_val, duration,
+             int(duration*0.2), int(duration*0.5), int(duration*0.25),
+             duration - int(duration*0.95), random.randint(65, 95), device_id))
+            # HRV Summary
+            hrv = random.uniform(25, 55)
+            self.cursor.execute("""
+            INSERT OR REPLACE INTO hrv_summary
+            (summary_id, user_access_token, calendar_date, weekly_avg, 
+             last_night_avg, last_night_5_min_high, status, feedback_phrase)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (f"hrv_{user_token}_{date_val}", user_token, date_val, hrv,
+             hrv + random.uniform(-5, 5), hrv + random.uniform(5, 15),
+             "BALANCED", "Your HRV is within normal range"))
+            # Activity Summary sometimes
+            if random.random() < 0.3:
+                act_id = f"activity_{user_token}_{date_val}_{random.randint(1000,9999)}"
+                self.cursor.execute("""
+                INSERT OR REPLACE INTO activity_summary
+                (activity_id, user_access_token, activity_name, activity_type,
+                 start_time_in_seconds, duration_in_seconds, distance_in_meters,
+                 avg_heart_rate, max_heart_rate, calories, device_id, steps)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (act_id, user_token, "Morning Run", "RUNNING",
+                 int(datetime.now().timestamp()), random.randint(1200, 5400),
+                 random.randint(2000, 10000), random.randint(140, 175),
+                 random.randint(160, 190), random.randint(200, 800),
+                 device_id, steps))
+        print(f"✅ Generated {days} days of Garmin sample data.")
+
+    # ------------------------
+    # IMPORT FROM LOCAL GARMIN DB
+    # ------------------------
+    def import_data_from_local_garmin_dbs(self, paths):
+        """Import from existing Garmin SQLite DB(s) stored locally"""
+        for file_path in paths:
+            if not os.path.exists(file_path):
+                print(f"❌ File not found: {file_path}")
+                continue
+            print(f"📥 Importing from Garmin DB: {file_path}")
+            local_conn = sqlite3.connect(file_path)
             try:
-                self.cursor.execute('''
-                INSERT OR REPLACE INTO sleep_sessions 
-                (user_id, sleep_date, bedtime, sleep_start, sleep_end, wake_time, 
-                 total_sleep_minutes, deep_sleep_minutes, light_sleep_minutes, 
-                 rem_sleep_minutes, awake_minutes, sleep_efficiency_percent, 
-                 sleep_score, device_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (user_id, sleep_date, bedtime, sleep_start, sleep_end, wake_time,
-                      total_sleep, deep_sleep, light_sleep, rem_sleep, awake_minutes,
-                      round(efficiency, 1), random.randint(60, 95), 'simulator'))
-            except Exception as e:
-                print(f"Error inserting sleep data for {sleep_date}: {e}")
-        
-        print("✅ Sample data generation completed!")
-    
+                # Example: adapt table/column names based on your local DB schema
+                for table in ['daily_summary', 'sleep_summary', 'hrv_summary', 'activity_summary']:
+                    try:
+                        df = self._read_table(local_conn, table)
+                        if not df.empty:
+                            df.to_sql(table, self.connection, if_exists='append', index=False)
+                            print(f"   ➕ Imported {len(df)} rows into {table}")
+                    except Exception as e:
+                        print(f"   ⚠️ Skipping {table} - {e}")
+                self.connection.commit()
+            finally:
+                local_conn.close()
+        print("✅ Local Garmin DB import complete.")
+
+    def _read_table(self, conn, table):
+        """Read table from SQLite DB into DataFrame"""
+        import pandas as pd
+        try:
+            return pd.read_sql(f"SELECT * FROM {table}", conn)
+        except Exception:
+            return pd.DataFrame()
+
+    # ------------------------
+    # STATS & CLOSE
+    # ------------------------
+    def get_database_stats(self):
+        for t in ['daily_summary', 'sleep_summary', 'hrv_summary', 'activity_summary']:
+            try:
+                self.cursor.execute(f"SELECT COUNT(*) FROM {t}")
+                print(f"{t:<20}: {self.cursor.fetchone()[0]} rows")
+            except:
+                print(f"{t:<20}: missing")
+
     def commit_and_close(self):
-        """Commit changes and close database connection"""
         self.connection.commit()
         self.connection.close()
-        print("✅ Database connection closed successfully!")
-    
-    def get_database_stats(self):
-        """Print database statistics"""
-        tables = ['health_data', 'user_profiles', 'personal_baselines', 
-                 'activity_sessions', 'sleep_sessions', 'health_alerts', 'metric_definitions']
-        
-        print("\n📊 Database Statistics:")
-        print("-" * 50)
-        
-        for table in tables:
-            try:
-                self.cursor.execute(f"SELECT COUNT(*) FROM {table}")
-                count = self.cursor.fetchone()[0]
-                print(f"{table:<20}: {count:>8} records")
-            except Exception as e:
-                print(f"{table:<20}: Error - {e}")
 
+
+# ------------------------
+# MAIN SCRIPT FLOW
+# ------------------------
 def main():
-    """Main function to create and populate the database"""
-    print("🏥 Creating Garmin Health Metrics Database...")
-    print("=" * 60)
-    
-    # Initialize database
-    db = HealthMetricsDB()
-    
-    try:
-        # Create all tables
-        db.create_tables()
-        
-        # Create indexes for performance
-        db.create_indexes()
-        
-        # Insert metric definitions
-        db.insert_metric_definitions()
-        
-        # Create default user
-        user_id = db.create_default_user()
-        
-        # Generate sample data
-        generate_sample = input("\n🤔 Generate sample data for testing? (y/n): ").lower().strip()
-        if generate_sample in ['y', 'yes']:
-            days = int(input("How many days of sample data? (default: 30): ") or 30)
-            db.generate_sample_data(days=days, user_id=user_id)
-        
-        # Show database statistics
-        db.get_database_stats()
-        
-        print(f"\n🎉 Database setup completed successfully!")
-        print(f"📁 Database file: {db.db_path}")
-        print(f"🔗 Connection string: sqlite:///{db.db_path}")
-        
-    except Exception as e:
-        print(f"❌ Error during database setup: {e}")
-    
-    finally:
-        db.commit_and_close()
+    print("🏥 Setting up Garmin Health & Activity Database...")
+    db = GarminHealthMetricsDB()
+    db.create_garmin_health_tables()
+    db.create_garmin_activity_tables()
+    db.create_user_management_tables()
+    db.create_indexes()
+    user_token = db.create_default_user()
+
+    choice = input(
+        "\n📊 Choose how to populate data:\n"
+        "1 - Generate sample Garmin data\n"
+        "2 - Import from local Garmin SQLite DB(s)\n"
+        "Select 1 or 2: ").strip()
+
+    if choice == "1":
+        days = int(input("How many days of sample data? (30 default): ") or 30)
+        db.generate_garmin_sample_data(days=days, user_token=user_token)
+    elif choice == "2":
+        paths_str = input("Enter full path(s) to Garmin DB files, separated by commas: ")
+        paths = [p.strip() for p in paths_str.split(",") if p.strip()]
+        db.import_data_from_local_garmin_dbs(paths)
+
+    db.get_database_stats()
+    db.commit_and_close()
+    print(f"✅ Setup complete. Database stored at: {db.db_path}")
 
 if __name__ == "__main__":
     main()
