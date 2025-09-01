@@ -9,11 +9,11 @@ import os
 
 # Add the scripts directory to the Python path
 sys.path.append(os.path.join(os.path.dirname(__file__), '.'))
-from db_helper import HealthDataManager
+from db_helper import GarminDataManager
 
 class RealTimeHealthDashboard:
     def __init__(self):
-        self.db_manager = HealthDataManager()
+        self.db_manager = GarminDataManager()
         self.user_id = 1  # Could add login/user selection if needed
         self.initialize_session_state()
         self.setup_page_config()
